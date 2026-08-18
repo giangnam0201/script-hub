@@ -37,9 +37,10 @@ return {
     {
         Name        = "Finish The Word",
         Module      = "src/scripts/finish_the_word",
-        -- TODO: paste the real id here (Hub tab -> Copy PlaceId while in game)
-        PlaceIds    = {},
-        GameIds     = {},
+        -- listed as both so it matches whether 91704854174760 is the place id
+        -- or the universe id; either one is enough
+        PlaceIds    = { 91704854174760 },
+        GameIds     = { 91704854174760 },
         NameMatch   = "finish the word",
         Icon        = "spell-check",
         Author      = "unknown (deobfuscated)",

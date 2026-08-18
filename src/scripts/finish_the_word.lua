@@ -90,13 +90,16 @@ function M.Setup(ctx)
         wordCount = wordCount + 1
     end
 
-    local function ingest(text)
+    -- `ranked` lists are in frequency order, so their line number doubles as
+    -- the "most common" rank. Alphabetical lists must not set it.
+    local function ingest(text, ranked)
         local added = 0
         local index = 0
         for line in tostring(text):gmatch("[^\r\n]+") do
             index = index + 1
-            if line:match("^[a-z]+$") then
-                if rank[line] == nil then rank[line] = index end
+            line = line:lower():match("^%s*(%a+)%s*$") or ""
+            if #line > 0 then
+                if ranked and rank[line] == nil then rank[line] = index end
                 if not known[line] then
                     addWord(line)
                     added = added + 1
@@ -115,6 +118,57 @@ function M.Setup(ctx)
             if type(object) == "string" and object:find("whitelistedFtwWords", 1, true) then
                 added = added + ingest(object)
             end
+        end
+        return added
+    end
+
+    ------------------------------------------------------- online dictionary
+    -- Fetched when the game's own list cannot be found in memory. The first
+    -- list is frequency ordered, so it also supplies the "Most common" ranking.
+    local WORD_SOURCES = {
+        { name = "common 10k",
+          ranked = true,
+          url = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa.txt" },
+        { name = "popular 25k",
+          url = "https://raw.githubusercontent.com/dolph/dictionary/master/popular.txt" },
+    }
+
+    local FULL_DICTIONARY = {
+        name = "full dictionary (~4MB)",
+        url = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt",
+    }
+
+    local function httpGet(url)
+        -- `request` keeps a status code, so try it first; HttpGet is the fallback
+        local requester = (syn and syn.request) or http_request or request
+        if requester then
+            local ok, response = pcall(requester, { Url = url, Method = "GET" })
+            if ok and type(response) == "table" and response.Body
+                and (response.StatusCode == 200 or response.StatusCode == nil) then
+                return response.Body
+            end
+        end
+        local ok, body = pcall(function() return game:HttpGet(url) end)
+        if ok and type(body) == "string" and #body > 0 then return body end
+        return nil
+    end
+
+    local function downloadList(source)
+        local body = httpGet(source.url)
+        if not body then
+            ctx.Notify("could not download " .. source.name, 5, "Finish The Word")
+            return 0
+        end
+        return ingest(body, source.ranked)
+    end
+
+    local function downloadDictionary(includeFull)
+        local added = 0
+        for _, source in ipairs(WORD_SOURCES) do
+            added = added + downloadList(source)
+        end
+        if includeFull then
+            added = added + downloadList(FULL_DICTIONARY)
         end
         return added
     end
@@ -146,11 +200,20 @@ function M.Setup(ctx)
         return nil
     end
 
+    -- Some builds of the game do not set this attribute at all; when it is
+    -- absent we fall back to "a prompt is on screen" as the trigger.
+    local turnAttributeMissing = false
+
     local function isMyTurn()
         local ok, value = pcall(function()
             return LocalPlayer:GetAttribute("IsTurn")
         end)
-        return ok and value == true
+        if not ok or value == nil then
+            turnAttributeMissing = true
+            return false
+        end
+        turnAttributeMissing = false
+        return value == true
     end
 
     ------------------------------------------------------------- searching
@@ -318,6 +381,61 @@ function M.Setup(ctx)
 
     ------------------------------------------------------------ suggestions UI
     local suggestionBox
+    local statusBox
+
+    -- Read the toggles/sliders straight off the UI every tick. Relying only on
+    -- OnChanged misses values restored by a saved config or set with SetValue,
+    -- which is the usual reason "auto answer" looks switched on but does nothing.
+    local OPTION_MAP = {
+        FTW_AutoAnswer      = "autoAnswer",
+        FTW_AutoChoose      = "autoChoose",
+        FTW_InstantAnswer   = "instant",
+        FTW_HumanType       = "humanType",
+        FTW_AutoLearn       = "autoLearn",
+        FTW_RemoveUsed      = "removeUsed",
+        FTW_ShowWhitelisted = "showWhite",
+        FTW_AnswerDelay     = "answerDelay",
+        FTW_TypeDelay       = "typeDelay",
+        FTW_SuggestCount    = "suggestCount",
+        FTW_SuggestSort     = "suggestSort",
+        FTW_EndsWith        = "endsWith",
+        FTW_WordEntry       = "wordEntry",
+    }
+
+    local function syncOptions()
+        local options = ctx.Options
+        if not options then return end
+        for id, key in pairs(OPTION_MAP) do
+            local option = options[id]
+            if option ~= nil then
+                local ok, value = pcall(function() return option.Value end)
+                if ok and value ~= nil then
+                    if key == "endsWith" or key == "wordEntry" or key == "suggestSort" then
+                        settings[key] = tostring(value)
+                    else
+                        settings[key] = value
+                    end
+                end
+            end
+        end
+    end
+
+    local function updateStatus(question, turn)
+        if not statusBox then return end
+        local net = findNetwork()
+        local prompt = "-"
+        if question then
+            prompt = question.Choices and "choices" or tostring(question.RequiredLetter)
+        end
+        pcall(function()
+            statusBox:SetDesc(("words: %d   network: %s   prompt: %s   IsTurn: %s%s")
+                :format(wordCount,
+                        net and "found" or "NOT FOUND",
+                        prompt,
+                        turn and "true" or "false",
+                        turnAttributeMissing and " (attribute missing - answering on prompt)" or ""))
+        end)
+    end
 
     local function showSuggestions(lines)
         if not suggestionBox then return end
@@ -364,14 +482,10 @@ function M.Setup(ctx)
     end
 
     ------------------------------------------------------------------ turn
-    local function handleTurn()
-        if not isMyTurn() then return end
+    local answering = false
+    local answeredPrompt = nil   -- the prompt we already acted on
 
-        local question = findQuestion()
-        if not question then return end
-
-        refresh(question)
-
+    local function handleTurn(question)
         if question.Choices then
             if not settings.autoChoose then return end
             -- pick the choice letter with the most available words
@@ -400,6 +514,18 @@ function M.Setup(ctx)
             return
         end
         answerWith(word, prefix)
+    end
+
+    -- One prompt = one answer. The turn attribute is not reliable on its own
+    -- (it can flip after the prompt appears, or not exist at all on some
+    -- versions), so the prompt text itself is what gates a new answer.
+    local function promptKey(question)
+        if question.Choices then
+            local parts = {}
+            for _, choice in ipairs(question.Choices) do parts[#parts + 1] = tostring(choice) end
+            return "choices:" .. table.concat(parts, ",")
+        end
+        return "prefix:" .. tostring(question.RequiredLetter)
     end
 
     ------------------------------------------------------------------- UI
@@ -540,6 +666,34 @@ function M.Setup(ctx)
         end,
     })
 
+    ctx.Tab:AddButton({
+        Title       = "Download dictionary",
+        Description = "~35k words incl. a frequency list (for 'Most common')",
+        Callback    = function()
+            ctx.Spawn(function()
+                ctx.Notify("downloading word lists...", 3, "Finish The Word")
+                local added = downloadDictionary(false)
+                ctx.Notify(("downloaded %d words (%d total)"):format(added, wordCount), 5,
+                    "Finish The Word")
+            end)
+        end,
+    })
+
+    ctx.Tab:AddButton({
+        Title       = "Download full dictionary",
+        Description = "~370k words, a few MB - slower, much better coverage",
+        Callback    = function()
+            ctx.Spawn(function()
+                ctx.Notify("downloading full dictionary, this takes a moment...", 5,
+                    "Finish The Word")
+                local added = downloadDictionary(true)
+                ctx.Notify(("downloaded %d words (%d total)"):format(added, wordCount), 5,
+                    "Finish The Word")
+            end)
+        end,
+    })
+
+    statusBox = ctx.Tab:AddParagraph({ Title = "Status", Content = "-" })
     suggestionBox = ctx.Tab:AddParagraph({ Title = "Suggestions", Content = "-" })
 
     ------------------------------------------------------------------ run
@@ -553,26 +707,52 @@ function M.Setup(ctx)
 
     ctx.Spawn(function()
         local added = loadGameWords()
-        ctx.Notify(added > 0 and ("loaded %d words"):format(added)
-            or "no word list found in memory yet - press Reload word list once a round starts",
-            5, "Finish The Word")
+        if added > 0 then
+            ctx.Notify(("loaded %d words from the game"):format(added), 5, "Finish The Word")
+        else
+            -- nothing in memory (round not started, or a build that keeps the
+            -- list server-side): fall back to the online lists
+            ctx.Notify("no word list in memory - downloading one...", 4, "Finish The Word")
+            added = downloadDictionary(false)
+            ctx.Notify(added > 0 and ("downloaded %d words"):format(added)
+                or "could not load any word list - check your executor's HTTP support",
+                5, "Finish The Word")
+        end
     end)
 
-    -- poll the turn state; the game exposes it as an attribute on the player
+    -- Main loop: watch for a prompt, answer it once, keep the panel current.
     ctx.Spawn(function()
         local wasTurn = false
+
         while ctx.IsAlive() do
+            syncOptions()
+
             local turn = isMyTurn()
-            if turn and not wasTurn then
-                used = {}
-                local ok, err = pcall(handleTurn)
-                if not ok then ctx.Notify("error: " .. tostring(err), 6, "Finish The Word") end
-            elseif turn then
-                local question = findQuestion()
-                if question then pcall(refresh, question) end
+            if turn ~= wasTurn then
+                if turn then used = {} end   -- new turn: used words reset
+                answeredPrompt = nil
+                wasTurn = turn
             end
-            wasTurn = turn
-            task.wait(0.25)
+
+            local question = findQuestion()
+            if question then
+                pcall(refresh, question)
+
+                local key = promptKey(question)
+                if key ~= answeredPrompt and not answering
+                    and (turn or turnAttributeMissing) then
+                    answeredPrompt = key
+                    answering = true
+                    local ok, err = pcall(handleTurn, question)
+                    answering = false
+                    if not ok then
+                        ctx.Notify("error: " .. tostring(err), 6, "Finish The Word")
+                    end
+                end
+            end
+
+            updateStatus(question, turn)
+            task.wait(0.2)
         end
     end)
 end

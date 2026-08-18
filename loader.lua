@@ -16,7 +16,7 @@
 
 local CONFIG = {
     -- Shown in the window title / notifications.
-    Name    = "Nam Hub",
+    Name    = "namdevHub",
     Version = "1.0.0",
 
     -- MUST end with a slash. Point this at the folder that holds loader.lua.

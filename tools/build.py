@@ -87,7 +87,7 @@ def build(name: str, version: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--name", default="Nam Hub")
+    ap.add_argument("--name", default="namdevHub")
     ap.add_argument("--version", default="1.0.0")
     ap.add_argument("--out", default=str(DIST / "hub.lua"))
     args = ap.parse_args()

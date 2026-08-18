@@ -1,4 +1,4 @@
-# Script Hub
+# namdevHub
 
 A game-aware Roblox script hub: one loader URL, it works out which game the
 player is in and loads only the scripts registered for that game, plus a set
