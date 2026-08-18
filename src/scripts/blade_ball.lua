@@ -39,7 +39,10 @@ function M.Setup(ctx)
         distance    = 18,       -- studs, for the simple distance mode
         pingComp    = true,
         extraDelay  = 0.0,      -- manual nudge, negative = earlier
-        cooldown    = 0.12,
+        cooldown    = 0.30,
+        minClosing  = 40,       -- studs/s below which it is not a real throw
+        alignment   = 0.75,     -- how directly the ball must be aimed at us
+        oneShot     = true,     -- one parry per throw, never a stream
         ballName    = "ball",
         parryKey    = "F",
         onlyToward  = true,     -- ignore a ball that is moving away
@@ -47,6 +50,11 @@ function M.Setup(ctx)
 
     local lastParry = -math.huge
     local parries = 0
+    -- Latch: goes false after a parry and only re-arms once the ball stops
+    -- threatening. Without it, impact stays under the threshold on every frame
+    -- of the approach and the parry key is pressed over and over.
+    local armed = true
+    local lastBallSeen = nil
     local statusBox, candidateBox
     local currentBall, ballSource = nil, "none"
 
@@ -279,8 +287,26 @@ function M.Setup(ctx)
 
     ctx.Tab:AddSlider("BB_Cooldown", {
         Title = "Minimum gap between parries",
-        Default = 0.12, Min = 0, Max = 1, Rounding = 2,
+        Default = 0.30, Min = 0, Max = 1, Rounding = 2,
     }):OnChanged(function(value) settings.cooldown = value end)
+
+    ctx.Tab:AddToggle("BB_OneShot", {
+        Title = "One parry per throw",
+        Description = "Stops the key being held down through the whole approach",
+        Default = true,
+    }):OnChanged(function(value) settings.oneShot = value end)
+
+    ctx.Tab:AddSlider("BB_MinClosing", {
+        Title = "Ignore below closing speed",
+        Description = "A hovering ball drifts slowly; a throw does not",
+        Default = 40, Min = 0, Max = 200, Rounding = 0,
+    }):OnChanged(function(value) settings.minClosing = value end)
+
+    ctx.Tab:AddSlider("BB_Alignment", {
+        Title = "Aim tolerance",
+        Description = "1.00 = only a ball aimed straight at you, 0.50 = loose",
+        Default = 0.75, Min = 0, Max = 1, Rounding = 2,
+    }):OnChanged(function(value) settings.alignment = value end)
 
     ctx.Tab:AddToggle("BB_OnlyToward", {
         Title = "Only when incoming",
@@ -346,6 +372,9 @@ function M.Setup(ctx)
         BB_ExtraDelay = "extraDelay",
         BB_Cooldown   = "cooldown",
         BB_OnlyToward = "onlyToward",
+        BB_OneShot    = "oneShot",
+        BB_MinClosing = "minClosing",
+        BB_Alignment  = "alignment",
         BB_BallName   = "ballName",
         BB_ParryKey   = "parryKey",
     }
@@ -394,28 +423,56 @@ function M.Setup(ctx)
         end
     end)
 
+    -- How directly the ball is travelling at us: 1 means straight at us, 0
+    -- means sideways. A ball hovering or orbiting nearby drifts towards us for
+    -- the odd frame and would otherwise read as an incoming throw.
+    local function aimFactor(ball, closing)
+        local speed = ball.AssemblyLinearVelocity.Magnitude
+        if speed <= 1 then return 0 end
+        return closing / speed
+    end
+
     ctx.Connect(RunService.Heartbeat, function()
         if not currentBall or not currentBall.Parent then return end
         if not alive() then return end
 
+        -- a different ball is a different throw
+        if currentBall ~= lastBallSeen then
+            lastBallSeen = currentBall
+            armed = true
+        end
+
         local distance, closing, impact = solve(currentBall)
         if not distance then return end
 
+        local aim = aimFactor(currentBall, closing or 0)
+
+        -- re-arm as soon as this ball is no longer a threat, which is what
+        -- makes the next throw parryable
+        if not impact or (closing or 0) < settings.minClosing
+            or aim < settings.alignment then
+            armed = true
+        end
+
         if settings.autoParry and virtualInput
-            and (os.clock() - lastParry) >= settings.cooldown then
+            and (os.clock() - lastParry) >= settings.cooldown
+            and (armed or not settings.oneShot) then
 
             local fire = false
             if settings.mode == "Distance" then
                 fire = distance <= settings.distance
-                    and (not settings.onlyToward or closing > 0)
-            else
-                if impact then
-                    local threshold = settings.impactTime + pingSeconds() + settings.extraDelay
-                    fire = impact <= threshold
-                end
+                    and (not settings.onlyToward or (closing or 0) > 0)
+            elseif impact then
+                local threshold = settings.impactTime + pingSeconds() + settings.extraDelay
+                fire = impact <= threshold
+                    and (closing or 0) >= settings.minClosing
+                    and aim >= settings.alignment
             end
 
-            if fire then pressParry() end
+            if fire then
+                pressParry()
+                armed = false
+            end
         end
     end)
 
@@ -438,6 +495,10 @@ function M.Setup(ctx)
                     ("ping %.0f ms   threshold %.3fs"):format(
                         pingSeconds() * 1000,
                         settings.impactTime + pingSeconds() + settings.extraDelay),
+                    ("armed %s   aim %.2f (need %.2f)   min closing %d"):format(
+                        armed and "yes" or "no (fired)",
+                        currentBall and aimFactor(currentBall, closing or 0) or 0,
+                        settings.alignment, settings.minClosing),
                 }, "\n"))
             end)
             task.wait(0.2)
