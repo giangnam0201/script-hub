@@ -76,80 +76,125 @@ function M.Setup(ctx)
         return ok and full or tostring(instance)
     end
 
-    ------------------------------------------------------- ball discovery
-    -- Every BasePart whose name contains the filter, plus anything sitting in
-    -- a folder that looks like a ball container. Returned with the numbers
-    -- that decide which one is the live ball.
-    local function ballCandidates()
-        local filter = settings.ballName:lower()
-        local origin = root()
-        local out = {}
-
-        local ok = pcall(function()
-            for _, descendant in ipairs(workspace:GetDescendants()) do
-                if descendant:IsA("BasePart") then
-                    local name = descendant.Name:lower()
-                    local parent = descendant.Parent
-                    local parentName = parent and parent.Name:lower() or ""
-                    if name:find(filter, 1, true)
-                        or parentName:find(filter, 1, true) then
-                        local velocity = descendant.AssemblyLinearVelocity
-                        out[#out + 1] = {
-                            part     = descendant,
-                            speed    = velocity.Magnitude,
-                            distance = origin
-                                and (descendant.Position - origin.Position).Magnitude
-                                or math.huge,
-                            path     = pathOf(descendant),
-                        }
-                    end
-                end
-            end
-        end)
-        if not ok then return {} end
-        return out
-    end
-
-    -- The live ball is the fastest-moving candidate; a stationary decoration
-    -- called "Ball" never wins over the one actually flying at you.
-    local function findBall()
-        local best, bestSpeed
-        for _, candidate in ipairs(ballCandidates()) do
-            if candidate.speed > 1 and (not bestSpeed or candidate.speed > bestSpeed) then
-                best, bestSpeed = candidate, candidate.speed
-            end
-        end
-        if best then return best.part, "moving candidate" end
-
-        -- nothing is moving: fall back to the nearest one so Status still
-        -- shows something useful between rounds
-        local nearest, nearestDistance
-        for _, candidate in ipairs(ballCandidates()) do
-            if not nearestDistance or candidate.distance < nearestDistance then
-                nearest, nearestDistance = candidate, candidate.distance
-            end
-        end
-        if nearest then return nearest.part, "nearest (idle)" end
-        return nil, "no candidate"
-    end
-
-    ------------------------------------------------------------- prediction
-    -- Closing speed is the component of the ball's velocity along the line to
-    -- us, so a ball flying past sideways does not count as incoming.
-    local function solve(ball)
-        local origin = root()
-        if not (ball and origin) then return nil end
-
-        local offset = origin.Position - ball.Position
+    ---------------------------------------------------------------- geometry
+    -- Closing speed is the ball's velocity projected onto the line to us, so a
+    -- ball flying past sideways does not count as incoming.
+    local function predict(part, origin)
+        if not (part and origin) then return nil end
+        local offset = origin.Position - part.Position
         local distance = offset.Magnitude
         if distance <= 0 then return nil end
 
-        local velocity = ball.AssemblyLinearVelocity
-        local closing = velocity:Dot(offset.Unit)   -- >0 means coming at us
+        local velocity = part.AssemblyLinearVelocity
+        local closing = velocity:Dot(offset.Unit)
 
         local impact
         if closing > 0 then impact = distance / closing end
         return distance, closing, impact
+    end
+
+    local function solve(ball) return predict(ball, root()) end
+
+    ------------------------------------------------------- ball discovery
+    -- A live dump from the game showed why a plain name filter is not enough:
+    -- a player called "bladeball_promax" put seven character parts into the
+    -- candidate list, all moving at 30 while the real ball moved at 15, so
+    -- "fastest match wins" locked onto that player instead of the ball.
+    -- Character parts are therefore excluded structurally.
+    local function isCharacterPart(part)
+        local node = part
+        while node and node ~= workspace do
+            if node:IsA("Model") then
+                if node:FindFirstChildOfClass("Humanoid") then return true end
+                if Players:GetPlayerFromCharacter(node) then return true end
+            end
+            node = node.Parent
+        end
+        return false
+    end
+
+    -- The same dump showed balls live in workspace.Balls and are named by
+    -- number ("859"), not "Ball", so the folder is the primary source and the
+    -- name filter is only a fallback for other maps/modes.
+    local function ballCandidates()
+        local filter = settings.ballName:lower()
+        local origin = root()
+        local out, seen = {}, {}
+
+        local function consider(part, source)
+            if type(part) ~= "userdata" and not part.IsA then return end
+            local ok = pcall(function() return part:IsA("BasePart") end)
+            if not ok or not part:IsA("BasePart") then return end
+            if seen[part] then return end
+            if isCharacterPart(part) then return end
+            seen[part] = true
+
+            local distance, closing, impact = predict(part, origin)
+            out[#out + 1] = {
+                part     = part,
+                source   = source,
+                speed    = part.AssemblyLinearVelocity.Magnitude,
+                distance = distance or math.huge,
+                closing  = closing or 0,
+                impact   = impact,
+                path     = pathOf(part),
+            }
+        end
+
+        pcall(function()
+            local folder = workspace:FindFirstChild("Balls")
+            if folder then
+                for _, d in ipairs(folder:GetDescendants()) do
+                    consider(d, "Balls folder")
+                end
+            end
+
+            for _, d in ipairs(workspace:GetDescendants()) do
+                local name = d.Name:lower()
+                local parent = d.Parent
+                local parentName = parent and parent.Name:lower() or ""
+                if name:find(filter, 1, true) or parentName:find(filter, 1, true) then
+                    consider(d, "name match")
+                end
+            end
+        end)
+
+        return out
+    end
+
+    -- Pick the most imminent threat, not the fastest object: with several
+    -- balls in play the one arriving soonest is the one to parry.
+    local function findBall()
+        local list = ballCandidates()
+
+        local best, bestImpact
+        for _, c in ipairs(list) do
+            if c.speed > 1 and c.impact and c.impact < (bestImpact or math.huge) then
+                best, bestImpact = c, c.impact
+            end
+        end
+        if best then
+            return best.part, ("incoming, %.2fs (%s)"):format(bestImpact, best.source)
+        end
+
+        local fastest, fastestSpeed
+        for _, c in ipairs(list) do
+            if c.speed > 1 and (not fastestSpeed or c.speed > fastestSpeed) then
+                fastest, fastestSpeed = c, c.speed
+            end
+        end
+        if fastest then
+            return fastest.part, ("moving, not incoming (%s)"):format(fastest.source)
+        end
+
+        local nearest, nearestDistance
+        for _, c in ipairs(list) do
+            if not nearestDistance or c.distance < nearestDistance then
+                nearest, nearestDistance = c, c.distance
+            end
+        end
+        if nearest then return nearest.part, ("idle (%s)"):format(nearest.source) end
+        return nil, "no candidate"
     end
 
     ------------------------------------------------------------------ input
@@ -271,8 +316,10 @@ function M.Setup(ctx)
                 local lines = {}
                 for i = 1, math.min(#list, 12) do
                     local c = list[i]
-                    lines[#lines + 1] = ("%.0f studs  %.0f speed  %s")
-                        :format(c.distance, c.speed, c.path)
+                    lines[#lines + 1] = ("%.0f studs  %.0f speed  %s  %s")
+                        :format(c.distance, c.speed,
+                                c.impact and ("%.2fs"):format(c.impact) or "away",
+                                c.path)
                 end
                 if #lines == 0 then
                     lines[1] = ('nothing in workspace matches "%s"'):format(settings.ballName)
