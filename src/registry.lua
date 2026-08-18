@@ -60,6 +60,18 @@ return {
     },
 
     {
+        Name        = "Kick A Lucky Block",
+        Module      = "src/scripts/kick_a_lucky_block",
+        -- paste the id from Hub tab -> Copy PlaceId to pin it exactly
+        PlaceIds    = {},
+        GameIds     = {},
+        NameMatch   = "lucky block",
+        Icon        = "box",
+        Author      = "FourHub (decoded) / hub",
+        Description = "Auto collect, kick, train, upgrade, replace and rebirth.",
+    },
+
+    {
         Name        = "Crawl",
         Module      = "src/scripts/crawl",
         Universal   = true,
