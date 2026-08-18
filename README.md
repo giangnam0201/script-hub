@@ -13,6 +13,7 @@ scripthub/
 │   └── scripts/
 │       ├── spelling_race.lua      Spelling Race auto-spell (deobfuscated)
 │       ├── finish_the_word.lua    Finish The Word solver (deobfuscated)
+│       ├── crawl.lua              game structure dumper (loaded everywhere)
 │       └── universal.lua          loaded in every game
 ├── tools/
 │   └── build.py                   bundles everything into dist/hub.lua
@@ -65,6 +66,22 @@ universe id). Several entries can match — each gets its own tab.
 
 Don't know the id? Run the hub in the game and use **Hub → Copy PlaceId**;
 the unsupported-game screen prints it too.
+
+## Crawl: writing a module against a game you cannot see
+
+The **Crawl** tab loads in every game and exists to answer "what does this
+game actually look like":
+
+| button | what it gives you |
+|---|---|
+| Crawl game | instance tree (classes, names, values, attributes, GUI text), every remote, LocalPlayer attributes, game-shaped tables and long strings in memory, loaded modules |
+| Probe Finish The Word | checks each thing the FTW module needs and says which one is missing, with near-miss candidates |
+| Watch a round | records remote traffic, attribute changes and GUI text changes while you play, so the moment you are asked to answer is captured |
+| Save report / Copy to clipboard | writes it to `namdevHub/crawl-<placeid>-<time>.txt`, or the clipboard |
+
+The watcher hooks `__namecall` (restored afterwards and on unload) and wraps
+`fire` / `remoteFire` on game tables it finds, so internal calls that never
+touch a RemoteEvent still show up.
 
 ## Module contract
 
