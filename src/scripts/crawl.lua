@@ -670,6 +670,76 @@ function M.Setup(ctx)
         end,
     })
 
+    -- Any other executor script draws its menu into CoreGui (or PlayerGui on
+    -- executors without gethui). The toggle and button labels in that menu are
+    -- that script's feature list, stated by the script itself - which is far
+    -- cheaper to read than decompiling it.
+    ctx.Tab:AddButton({
+        Title       = "Dump script menus",
+        Description = "Lists every GUI another script has drawn, with its labels",
+        Callback    = function()
+            ctx.Spawn(function()
+                report = {}
+                out("==== script menu dump ====")
+                out("executor: %s", safe(function()
+                    return identifyexecutor and identifyexecutor() or "?" end, "?"))
+
+                local roots = {}
+                local hidden = safe(function() return gethui and gethui() end, nil)
+                if hidden then roots[#roots + 1] = { "gethui()", hidden } end
+                local core = safe(function() return game:GetService("CoreGui") end, nil)
+                if core then roots[#roots + 1] = { "CoreGui", core } end
+                local playerGui = safe(function()
+                    return LocalPlayer:FindFirstChild("PlayerGui") end, nil)
+                if playerGui then roots[#roots + 1] = { "PlayerGui", playerGui } end
+
+                -- text-bearing descendants only; a full tree dump of a UI
+                -- library is mostly layout objects and drowns the labels
+                local function dumpTexts(container, indent, state)
+                    for _, child in ipairs(safe(function()
+                        return container:GetChildren() end, {}) or {}) do
+                        state.count = state.count + 1
+                        if state.count > 4000 then return end
+                        local class = safe(function() return child.ClassName end, "?")
+                        local text = safe(function() return child.Text end, nil)
+                        if type(text) == "string" and #text > 0 then
+                            out("%s%s %q", string.rep("  ", indent), class, text)
+                        end
+                        dumpTexts(child, indent + 1, state)
+                    end
+                end
+
+                local total = 0
+                for _, entry in ipairs(roots) do
+                    local label, root = entry[1], entry[2]
+                    for _, gui in ipairs(safe(function()
+                        return root:GetChildren() end, {}) or {}) do
+                        local name = safe(function() return gui.Name end, "?")
+                        local class = safe(function() return gui.ClassName end, "?")
+                        -- skip the hub's own window so the output is only
+                        -- other scripts
+                        if name ~= (ctx.HubName or "namdevHub") then
+                            total = total + 1
+                            out("")
+                            out("---- %s / %s %q ----", label, class, name)
+                            dumpTexts(gui, 1, { count = 0 })
+                        end
+                    end
+                end
+
+                out("")
+                out("GUIs dumped: %d", total)
+                ctx.Notify(("dumped %d GUIs - Copy report to clipboard"):format(total),
+                    6, "Crawl")
+                if summary then
+                    pcall(function()
+                        summary:SetDesc(("menu dump: %d GUIs, %d lines"):format(total, #report))
+                    end)
+                end
+            end)
+        end,
+    })
+
     ctx.Tab:AddButton({
         Title       = "Watch a round",
         Description = "Record remotes, attributes and GUI text while you play",
