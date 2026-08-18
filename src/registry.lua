@@ -44,7 +44,7 @@ return {
         NameMatch   = "finish the word",
         Icon        = "spell-check",
         Author      = "unknown (deobfuscated)",
-        Description = "Reads the game's word list from memory and finishes the prompt.",
+        Description = "Reads the prompt off your table and types an answer with real keystrokes.",
     },
 
     {

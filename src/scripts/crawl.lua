@@ -618,6 +618,58 @@ function M.Setup(ctx)
         end,
     })
 
+    -- The match UI only exists while a round is running, so it misses the
+    -- full crawl done in the lobby. This grabs just that, on demand.
+    ctx.Tab:AddButton({
+        Title       = "Dump match UI now",
+        Description = "PlayerGui + your table, mid-round - run this while playing",
+        Callback    = function()
+            ctx.Spawn(function()
+                report = {}
+                out("==== match UI dump ====")
+                out("clock: %s   IsTurn: %s", tostring(os.time()),
+                    tostring(safe(function() return LocalPlayer:GetAttribute("IsTurn") end, nil)))
+
+                local gui = safe(function() return LocalPlayer:FindFirstChild("PlayerGui") end, nil)
+                if gui then
+                    out("")
+                    out("---- PlayerGui ----")
+                    walk(gui, 0, { count = 0 })
+                end
+
+                -- the table you are sitting at
+                local character = safe(function() return LocalPlayer.Character end, nil)
+                local humanoid = character and safe(function()
+                    return character:FindFirstChildOfClass("Humanoid")
+                end, nil)
+                local seat = humanoid and safe(function() return humanoid.SeatPart end, nil)
+
+                out("")
+                out("---- your seat ----")
+                out("SeatPart: %s", seat and safe(function() return seat:GetFullName() end, "?") or "not seated")
+
+                if seat then
+                    local node = seat
+                    while node and node ~= workspace do
+                        local display = safe(function() return node:FindFirstChild("Table") end, nil)
+                        if display then
+                            out("")
+                            out("---- your table ----")
+                            walk(node, 0, { count = 0 })
+                            break
+                        end
+                        node = safe(function() return node.Parent end, nil)
+                    end
+                end
+
+                ctx.Notify("match UI dumped - Save report or Copy to clipboard", 6, "Crawl")
+                if summary then
+                    pcall(function() summary:SetDesc(("match dump: %d lines"):format(#report)) end)
+                end
+            end)
+        end,
+    })
+
     ctx.Tab:AddButton({
         Title       = "Watch a round",
         Description = "Record remotes, attributes and GUI text while you play",
