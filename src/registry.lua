@@ -48,6 +48,19 @@ return {
     },
 
     {
+        Name        = "Blade Ball",
+        Module      = "src/scripts/blade_ball",
+        -- NameMatch is the reliable one; the marketplace name always contains
+        -- this. Paste the id from Hub tab -> Copy PlaceId to pin it exactly.
+        PlaceIds    = {},
+        GameIds     = {},
+        NameMatch   = "blade ball",
+        Icon        = "swords",
+        Author      = "hub",
+        Description = "Predicts time to impact from the ball's own velocity and parries.",
+    },
+
+    {
         Name        = "Crawl",
         Module      = "src/scripts/crawl",
         Universal   = true,
