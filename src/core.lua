@@ -249,6 +249,62 @@ function Core.Start(config)
         })
     end
 
+    -- Every game the hub knows about, not only the one being played, so the
+    -- supported list is readable in-game and copyable to share.
+    do
+        local games, authors, seen = {}, {}, {}
+        for _, entry in ipairs(registry) do
+            if not entry.Universal then
+                local how
+                if entry.PlaceIds and #entry.PlaceIds > 0 then
+                    how = "id " .. tostring(entry.PlaceIds[1])
+                elseif entry.GameIds and #entry.GameIds > 0 then
+                    how = "universe " .. tostring(entry.GameIds[1])
+                else
+                    how = "name \"" .. tostring(entry.NameMatch or "?") .. "\""
+                end
+                games[#games + 1] = ("%d. %s  (%s)"):format(#games + 1, entry.Name, how)
+
+                local credit = entry.Credit or entry.Author
+                if credit and credit ~= "hub" and not seen[credit] then
+                    seen[credit] = true
+                    authors[#authors + 1] = credit
+                end
+            end
+        end
+
+        table.sort(authors, function(a, b) return a:lower() < b:lower() end)
+
+        HubTab:AddParagraph({
+            Title   = ("Supported games (%d)"):format(#games),
+            Content = #games > 0 and table.concat(games, "\n") or "none yet",
+        })
+
+        HubTab:AddParagraph({
+            Title   = ("Supporters (%d)"):format(#authors),
+            Content = "Original authors whose scripts were decoded and rebuilt "
+                   .. "into this hub:\n\n" ..
+                   (#authors > 0 and table.concat(authors, "\n") or "none yet"),
+        })
+
+        HubTab:AddButton({
+            Title       = "Copy supported list",
+            Description = "Every game the hub covers, for sharing",
+            Callback    = function()
+                local text = ("%s %s\n\nSupported games (%d):\n%s\n\nSupporters (%d):\n%s")
+                    :format(config.Name, config.Version or "", #games,
+                            table.concat(games, "\n"), #authors,
+                            table.concat(authors, "\n"))
+                if setclipboard then
+                    setclipboard(text)
+                    hub.Notify(("copied %d games"):format(#games))
+                else
+                    hub.Notify("no setclipboard in this executor", 6)
+                end
+            end,
+        })
+    end
+
     HubTab:AddParagraph({
         Title   = "Environment",
         Content = ("Game: %s\nPlaceId: %d\nGameId: %d\nExecutor: %s\nHub: %s %s")

@@ -72,15 +72,6 @@ return {
     },
 
     {
-        Name        = "Crawl",
-        Module      = "src/scripts/crawl",
-        Universal   = true,
-        Icon        = "search",
-        Author      = "hub",
-        Description = "Dumps the game's structure and records a live round, for writing scripts against.",
-    },
-
-    {
         Name        = "Universal",
         Module      = "src/scripts/universal",
         Universal   = true,
