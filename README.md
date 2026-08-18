@@ -12,6 +12,7 @@ scripthub/
 │   ├── registry.lua               game -> script mapping  (the file you edit)
 │   └── scripts/
 │       ├── spelling_race.lua      Spelling Race auto-spell (deobfuscated)
+│       ├── finish_the_word.lua    Finish The Word solver (deobfuscated)
 │       └── universal.lua          loaded in every game
 ├── tools/
 │   └── build.py                   bundles everything into dist/hub.lua
@@ -118,5 +119,15 @@ destroys the UI. `getgenv().__ScriptHub` holds the live hub while it runs.
 
 Hand over the obfuscated file and it gets decoded, rewritten as a readable
 module against the contract above, registered, and verified before it lands
-in `src/scripts/`. The Spelling Race module is an example of the end result —
-it started as a WeAreDevs-obfuscated blob.
+in `src/scripts/`. Both game modules here started as obfuscated blobs:
+Spelling Race was WeAreDevs-obfuscated, Finish The Word was a two-stage Luau
+VM.
+
+**One thing the rewrites drop on purpose.** Obfuscated scripts often pull
+extra code from the author's server at runtime and `loadstring` it — the
+Finish The Word original fetched its UI library, a save manager and a version
+file from `ancestrychanged.com`, and ran a second remote payload on some
+executors. Whoever controls that domain can change what those files do at any
+time, for everyone running the script. The rewritten modules use the hub's own
+UI and fetch nothing from third parties, so what you read in `src/scripts/` is
+all that runs.

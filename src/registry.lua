@@ -35,6 +35,18 @@ return {
     },
 
     {
+        Name        = "Finish The Word",
+        Module      = "src/scripts/finish_the_word",
+        -- TODO: paste the real id here (Hub tab -> Copy PlaceId while in game)
+        PlaceIds    = {},
+        GameIds     = {},
+        NameMatch   = "finish the word",
+        Icon        = "spell-check",
+        Author      = "unknown (deobfuscated)",
+        Description = "Reads the game's word list from memory and finishes the prompt.",
+    },
+
+    {
         Name        = "Universal",
         Module      = "src/scripts/universal",
         Universal   = true,
